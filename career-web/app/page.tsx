@@ -3,6 +3,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { ArrowUpRight, ArrowRight, ArrowLeft, Check, Copy, Download, FileText, KeyRound, LockKeyhole, Plus, RotateCcw, Upload, X, LoaderCircle, PenLine, MessageSquare, ScanText, ShieldCheck } from 'lucide-react';
 import { appendFollowup, countText, type CareerDocument, type CoachInput, type CoachResult, inputSchema, MAX_FILE_BYTES, modes, resultSchema, roles, SKILL_VERSION } from '../lib/coach';
+import AccountPanel from './account-panel';
+import type { Snapshot } from '../lib/workspace';
 
 const initial: CoachInput = { mode: 'draft', company: '', position: '', question: '', limit: 700, experience: '', job: '', draft: '', documents: [], previous: '', followup: '', consent: true };
 const modeIcons = { draft: PenLine, revise: ScanText, feedback: MessageSquare, interview: MessageSquare };
@@ -19,13 +21,15 @@ export default function Home() {
   const [apiKey, setApiKey] = useState('');
   const [consent, setConsent] = useState(false);
   const [result, setResult] = useState<CoachResult | null>(null);
-  const [resultContext, setResultContext] = useState(initial);
+  const [resultContext, setResultContext] = useState<Snapshot['resultContext']>(initial);
   const [loading, setLoading] = useState(false);
   const [fileBusy, setFileBusy] = useState(false);
+  const [accountBusy, setAccountBusy] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [followup, setFollowup] = useState('');
   const controller = useRef<AbortController | null>(null);
+  const workspaceGeneration = useRef(0);
   const fileInput = useRef<HTMLInputElement>(null);
   const guide = useRef<HTMLDetailsElement>(null);
   const heading = useRef<HTMLHeadingElement>(null);
@@ -43,7 +47,7 @@ export default function Home() {
   }, [apiKey, form.experience, form.documents.length, result]);
 
   function go(next: number) {
-    if (loading || fileBusy) return;
+    if (loading || fileBusy || accountBusy) return;
     if (next > 0 && !hasExperience) { setError('이력서를 올리거나 경험을 직접 입력해주세요.'); return; }
     if (next === 2 && !result) { setError('지원 정보를 입력한 뒤 답변을 만들어주세요.'); return; }
     setError(''); setStep(next);
@@ -52,6 +56,7 @@ export default function Home() {
 
   async function upload(files: FileList | null) {
     if (!files?.length) return;
+    const generation = workspaceGeneration.current;
     setFileBusy(true); setError('');
     try {
       const added: CareerDocument[] = [];
@@ -77,6 +82,7 @@ export default function Home() {
         const role = /공고|채용|job/i.test(file.name) ? 'job' : /기업|회사|IR/.test(file.name) ? 'company' : /합격|예시|sample/i.test(file.name) ? 'example' : 'candidate';
         added.push({ name: file.name, role, mime: pdf ? 'application/pdf' : 'text/plain', data });
       }
+      if (generation !== workspaceGeneration.current) return;
       setForm(current => ({ ...current, documents: [...current.documents, ...added] }));
       setNotice('파일을 준비했어요. 각 파일의 자료 종류를 확인해주세요.');
     } catch (cause) { setError(cause instanceof TypeError ? 'UTF-8 텍스트 또는 PDF 파일로 저장해서 다시 올려주세요.' : cause instanceof Error ? cause.message : '파일을 읽지 못했어요. 다시 올려주세요.'); }
@@ -113,10 +119,25 @@ export default function Home() {
     } finally { if (controller.current === active) { controller.current = null; setLoading(false); } }
   }
 
-  function reset() {
-    if (!window.confirm('이 페이지의 키, 자료와 결과를 모두 지울까요? 필요한 내용은 먼저 내려받아 주세요.')) return;
+  function clear() {
+    workspaceGeneration.current++;
     controller.current?.abort(); controller.current = null; setLoading(false);
-    setForm(initial); setResult(null); setApiKey(''); setConsent(false); setFollowup(''); setError(''); setStep(0); setNotice('모든 입력을 지웠어요. 새 자료로 시작할 수 있어요.');
+    setForm(initial); setResult(null); setResultContext(initial); setApiKey(''); setConsent(false); setFollowup(''); setError(''); setStep(0); setNotice('화면의 입력을 지웠어요. 계정의 저장본은 유지됩니다.');
+  }
+
+  function reset() {
+    if (!window.confirm('이 페이지의 키, 자료와 결과를 모두 지울까요? 계정의 저장본은 유지됩니다.')) return;
+    clear();
+  }
+
+  function snapshot(): Snapshot {
+    const { consent: _consent, ...fields } = form;
+    const { company, position, mode, limit } = resultContext;
+    return { form: fields, result, resultContext: { company, position, mode, limit }, followup, step };
+  }
+
+  function restore(value: Snapshot) {
+    clear(); setForm({ ...value.form, consent: true }); setResult(value.result); setResultContext(value.resultContext); setFollowup(value.followup); setStep(value.step); setNotice('');
   }
 
   async function copy() {
@@ -145,13 +166,14 @@ export default function Home() {
       <section className="workspace-band" id="workspace">
         <div className="wrap">
           <div className="section-top"><div><p className="eyebrow">YOUR WORKSPACE</p><h2>나의 작업실</h2></div><span className="version">COACHING SKILL <b>v{SKILL_VERSION}</b></span></div>
-          <div className="desk">
+          <AccountPanel snapshot={snapshot} restore={restore} clear={clear} busy={loading || fileBusy} onBusy={setAccountBusy}/>
+          <div className="desk" inert={accountBusy} aria-busy={accountBusy}>
             <aside className="desk-sidebar">
               <p className="small-title">오늘 필요한 도움</p>
               <div className="mode-list" role="group" aria-label="코칭 목적">
                 {(Object.keys(modes) as (keyof typeof modes)[]).map(mode => { const Icon = modeIcons[mode]; return <button key={mode} type="button" aria-pressed={form.mode === mode} disabled={loading} className={form.mode === mode ? 'mode active' : 'mode'} onClick={() => { update('mode', mode); if (step === 2) setStep(1); }}><Icon size={18} strokeWidth={1.5}/>{modes[mode]}{form.mode === mode && <span className="mode-dot"/>}</button>; })}
               </div>
-              <div className="sidebar-bottom"><ShieldCheck size={22} strokeWidth={1.2}/><h3>내 경험은, 내 것.</h3><p>생성할 때만 서버를 거쳐 Google로 전송해요. 페이지를 닫으면 입력이 사라져요.</p><button className="quiet" type="button" onClick={reset} disabled={fileBusy}><RotateCcw size={14}/> 모두 지우고 새로 시작</button></div>
+              <div className="sidebar-bottom"><ShieldCheck size={22} strokeWidth={1.2}/><h3>내 경험은, 내 것.</h3><p>생성 시 Google로 전송하고, 저장을 누르면 내 계정에 보관해요. API 키는 저장하지 않아요.</p><button className="quiet" type="button" onClick={reset} disabled={fileBusy}><RotateCcw size={14}/> 모두 지우고 새로 시작</button></div>
             </aside>
 
             <div className="desk-main">
@@ -165,14 +187,14 @@ export default function Home() {
               <div className="work-content">
                 <div className="work-title"><span className="chapter">0{step + 1}</span><div><h3 ref={heading} tabIndex={-1}>{['먼저, 나를 알려주세요.', '어떤 기회를 준비하나요?', '내 목소리로 한 번 더.'][step]}</h3><p>{['잘 정리된 이력서가 아니어도 괜찮아요. 경험 메모부터 시작할 수 있어요.', '공고와 문항을 구체적으로 알려줄수록, 내 경험과의 연결이 선명해져요.', '확인된 사실과 내 말투를 살펴보고, 필요한 부분을 함께 다듬어보세요.'][step]}</p></div></div>
 
-                <fieldset disabled={loading || fileBusy} className="work-fields">
+                <fieldset disabled={loading || fileBusy || accountBusy} className="work-fields">
                   {step === 0 && <>
                     <input className="sr-only" ref={fileInput} id="resume-files" type="file" accept=".pdf,.txt,.md" multiple onChange={e => void upload(e.target.files)}/>
                     <button type="button" className="upload-area" onClick={() => fileInput.current?.click()}><Upload size={28} strokeWidth={1.2}/><strong>{fileBusy ? '파일을 읽고 있어요' : '이력서 또는 경험 자료 올리기'}</strong><span>PDF · TXT · MD / 최대 5개, 전체 2MB</span><span className="upload-cta"><Plus size={14}/> 파일 선택</span></button>
                     <p className="helper">한글·워드 문서는 PDF로 저장해 주세요. 공고·기업 자료도 함께 올릴 수 있어요.</p>
                     {form.documents.length > 0 && <ul className="file-list">{form.documents.map((doc, index) => <li key={doc.name}><FileText size={18}/><span className="file-name">{doc.name}</span><select aria-label={`${doc.name} 자료 종류`} value={doc.role} onChange={e => update('documents', form.documents.map((item, i) => i === index ? { ...item, role: e.target.value as CareerDocument['role'] } : item))}>{Object.entries(roles).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select><button className="icon-button" type="button" aria-label={`${doc.name} 삭제`} onClick={() => update('documents', form.documents.filter((_, i) => i !== index))}><X size={16}/></button></li>)}</ul>}
                     <label className="field" htmlFor="experience"><span>경험을 직접 적어도 좋아요 <small>파일이 있다면 선택</small></span><textarea id="experience" rows={5} maxLength={24000} value={form.experience} onChange={e => update('experience', e.target.value)} placeholder={'어떤 상황에서, 무엇을 판단하고, 직접 무엇을 했나요?\n완성한 결과물이나 확인한 변화를 편하게 적어주세요.'}/></label>
-                    <div className="field-note"><LockKeyhole size={15}/><span>주민등록번호·주소 등 불필요한 개인정보는 빼주세요.<br/>생성을 누르기 전에는 자료가 서버로 전송되지 않아요.</span></div>
+                    <div className="field-note"><LockKeyhole size={15}/><span>주민등록번호·주소 등 불필요한 개인정보는 빼주세요.<br/>생성 또는 저장을 누르면 자료가 서버로 전송돼요.</span></div>
                     <div className="form-footer"><span>{form.documents.length ? `${form.documents.length}개 자료 준비됨` : '내 경험만 준비하면 시작할 수 있어요.'}</span><button type="button" className="button primary" onClick={() => go(1)}>지원 정보 입력 <ArrowRight size={16}/></button></div>
                   </>}
 
@@ -182,7 +204,7 @@ export default function Home() {
                     <div className="limit-row"><label htmlFor="limit">최대 글자 수</label><input id="limit" type="number" min={100} max={5000} step={50} value={form.limit} onChange={e => update('limit', Number(e.target.value))}/><span>자 · 공백과 줄바꿈 포함</span></div>
                     <label className="field" htmlFor="job"><span>채용 공고 <small>공고 파일이 있다면 선택</small></span><textarea id="job" maxLength={16000} rows={4} value={form.job} onChange={e => update('job', e.target.value)} placeholder="담당 업무, 필수·우대 조건을 붙여넣어 주세요. 링크만으로는 공고를 읽을 수 없어요."/></label>
                     {(form.mode === 'revise' || form.mode === 'feedback') && <label className="field" htmlFor="draft"><span>작성한 원문 <b>*</b></span><textarea id="draft" maxLength={16000} rows={8} value={form.draft} onChange={e => update('draft', e.target.value)} placeholder="검토할 자소서 원문을 붙여넣어 주세요." required/></label>}
-                    <label className="consent"><input type="checkbox" checked={consent} onChange={e => setConsent(e.target.checked)}/><span>입력 자료와 키가 이 사이트 서버를 거쳐 Google Gemini로 전달되는 데 동의해요. 사이트는 저장하지 않으며, Google 정책과 본인 계정의 API 요금·한도가 적용돼요. <a href="https://ai.google.dev/gemini-api/terms" target="_blank" rel="noreferrer">Google 이용약관 <ArrowUpRight size={12}/></a></span></label>
+                    <label className="consent"><input type="checkbox" checked={consent} onChange={e => setConsent(e.target.checked)}/><span>입력 자료와 키가 이 사이트 서버를 거쳐 Google Gemini로 전달되는 데 동의해요. API 키는 저장하지 않으며, Google 정책과 본인 계정의 API 요금·한도가 적용돼요. <a href="https://ai.google.dev/gemini-api/terms" target="_blank" rel="noreferrer">Google 이용약관 <ArrowUpRight size={12}/></a></span></label>
                     <div className="form-footer"><button type="button" className="quiet" onClick={() => go(0)}><ArrowLeft size={15}/> 자료 준비</button><button type="button" className="button primary" onClick={() => void generate()}>{form.mode === 'feedback' ? '피드백 받기' : '답변 만들기'} <ArrowUpRight size={17}/></button></div>
                   </>}
 
@@ -209,10 +231,10 @@ export default function Home() {
         <div className="guides">
           <details ref={guide}><summary><span>01</span> Gemini API 키, 어떻게 받나요?<Plus size={20}/></summary><div className="guide-body"><ol><li><a href="https://aistudio.google.com/apikey" target="_blank" rel="noreferrer">Google AI Studio 열기 <ArrowUpRight size={14}/></a>에서 Google 계정으로 로그인하세요.</li><li>안내에 동의하고 <strong>API 키 만들기(Create API key)</strong>를 선택하세요. 새 프로젝트를 만들거나 사용할 프로젝트를 선택하면 됩니다.</li><li>만들어진 키를 복사해 작업실의 <strong>Gemini API 키</strong> 칸에 붙여넣으세요. 다른 사람에게 공유하지 마세요.</li><li>본인 이력서를 올리고 지원 정보를 입력한 뒤 <strong>답변 만들기</strong>를 눌러주세요.</li></ol><p>키는 이 페이지에서만 사용해요. 새로고침하면 다시 입력해야 합니다. 무료 사용 가능 여부와 한도는 모델·지역·계정에 따라 달라요. 결제를 연결했다면 사용료가 발생할 수 있으니 AI Studio에서 확인해주세요.</p><a className="text-link" href="https://ai.google.dev/gemini-api/docs/api-key?hl=ko" target="_blank" rel="noreferrer">Google 공식 발급 안내 <ArrowUpRight size={14}/></a></div></details>
           <details><summary><span>02</span> 어떤 자료를 준비하면 좋나요?<Plus size={20}/></summary><div className="guide-body"><p>이력서, 포트폴리오, 프로젝트 메모 중 하나면 시작할 수 있어요. 직접 한 행동과 확인된 결과가 담기면 더 좋아요. 파일이 없다면 경험 입력란에 적어주세요.</p><p>채용 공고·기업 자료·참고 자소서는 파일 옆에서 종류를 구분해주세요. 참고 자소서는 구성만 참고하고 다른 사람의 경험을 내 이력으로 사용하지 않아요.</p><p>PDF·TXT·MD를 지원해요. HWP·DOCX는 원래 프로그램에서 PDF로 저장해주세요. 암호화된 PDF는 해제하고, 파일은 최대 5개·전체 2MB로 준비해주세요.</p></div></details>
-          <details><summary><span>03</span> 자료와 API 키는 어디에 저장되나요?<Plus size={20}/></summary><div className="guide-body"><p>이 사이트는 입력한 자료·키·결과를 데이터베이스나 브라우저 저장소에 저장하지 않아요. 현재 페이지의 메모리에만 남고 새로고침하거나 닫으면 사라져요. 필요한 결과는 내려받아 보관해주세요.</p><p>생성을 요청하면 자료와 키가 이 사이트 서버를 거쳐 Google Gemini로 전달돼요. Google의 처리·보관 정책은 별도로 적용됩니다. 민감한 정보는 올리기 전에 지워주세요.</p><p>실제 생성은 본인 Google 계정의 API 사용량으로 계산돼요. 키 지우기 또는 모두 지우고 새로 시작으로 현재 입력을 지울 수 있어요.</p></div></details>
+          <details><summary><span>03</span> 자료와 API 키는 어디에 저장되나요?<Plus size={20}/></summary><div className="guide-body"><p>Google 로그인 후 현재 작업 저장을 누르면 이력서·입력·결과를 Supabase 데이터베이스에 계정별로 보관해요. 저장본 불러오기로 이어서 작성하고, 저장본 삭제로 서버의 자료를 지울 수 있어요. 저장하지 않은 입력은 페이지를 닫으면 사라져요. API 키는 현재 페이지 메모리에만 남으며 저장본에 포함되지 않아요.</p><p>생성을 요청하면 자료와 키가 이 사이트 서버를 거쳐 Google Gemini로 전달돼요. Google의 처리·보관 정책은 별도로 적용됩니다. 민감한 정보는 올리기 전에 지워주세요.</p><p>실제 생성은 본인 Google 계정의 API 사용량으로 계산돼요. 키 지우기 또는 모두 지우고 새로 시작으로 현재 입력을 지울 수 있어요.</p></div></details>
         </div>
       </section>
     </main>
-    <footer className="wrap footer"><a className="brand" href="#top">career note<span className="brand-period">.</span></a><p>나의 경험으로 쓰는, 다음 기회.</p><span>METHOD v{SKILL_VERSION} · 2026</span></footer>
+    <footer className="wrap footer"><a className="brand" href="#top">career note<span className="brand-period">.</span></a><p>나의 경험으로 쓰는, 다음 기회. · <a href="/privacy">개인정보 처리 안내</a></p><span>METHOD v{SKILL_VERSION} · 2026</span></footer>
   </>;
 }
