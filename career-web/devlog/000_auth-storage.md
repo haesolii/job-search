@@ -48,3 +48,9 @@ Architect: /root/auth_discovery. D1~D6 제안을 수용. UUID revision/초기 in
 독립 구현 리뷰 /root/auth_review: 서버 권한 경계 차단 결함 없음. focus 중 busy로 누락되는 계정 재확인은 busy 종료/계정 요청 완료 시 다시 확인하도록 보완했다. 파일 읽기 결과는 generation으로 계정 변경 후 재삽입을 방지한다. 실제 OAuth 및 갱신 쿠키 검증은 아직 남음. Google 공급자 설정/실제 로그인/배포 전이므로 완료로 표시하지 않는다.
 
 실연 완료: Google OAuth 로그인, 인증 유지된 새 탭에서 저장본 복원, 가짜 API 키 미복원, 승인된 임시 자료 삭제, 로그아웃 시 화면 메모리 삭제. 390px/320px 계정 패널 가로 overflow 없음. 15/15 자동 테스트와 최종 프로덕션 빌드 통과. OAuth 성공/실패, PKCE 및 HttpOnly/Secure 쿠키도 자동 테스트로 확인. Google 앱 프로덕션 게시 완료, Supabase Google Enabled 확인. 운영 환경 두 연결 변수 추가 완료.
+
+## 배포 완료
+
+소스 commit 012b6a9, GitHub codex/career-note-web 업로드 완료. Vercel production dpl_7mzsCKt4KTj2xMYXDWpT6CDLZ1pg READY, https://career-note-haesolii.vercel.app alias 적용. 운영 주소에서 Google OAuth 왕복 로그인과 본인 DB 조회 성공, 삭제된 임시 저장본이 없는 상태 확인. 비로그인 workspace 401, account 설정 200/no-store/private, 개인정보 안내 200 확인. API 키는 복원되지 않았으며 실제 개인 이력서는 시험/배포에 사용하지 않았다.
+
+남은 사용자 설정 없음. 생성 기능은 기존 BYOK 동작을 유지하며 이번 범위에서 실제 유효 Gemini 키로 유료 생성하지 않았다. 계정별 저장은 명시적 버튼 방식이고 한 계정당 현재 작업 하나이다. Git 연결 자동배포는 별도 설정하지 않았으며 이번 배포는 Vercel CLI로 수행했다.
