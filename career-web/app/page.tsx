@@ -4,6 +4,8 @@ import { useEffect, useRef, useState } from 'react';
 import { ArrowUpRight, ArrowRight, ArrowLeft, Check, Copy, Download, FileText, KeyRound, LockKeyhole, Plus, RotateCcw, Upload, X, LoaderCircle, PenLine, MessageSquare, ScanText, ShieldCheck } from 'lucide-react';
 import { appendFollowup, countText, type CareerDocument, type CoachInput, type CoachResult, inputSchema, MAX_FILE_BYTES, modes, resultSchema, roles, SKILL_VERSION } from '../lib/coach';
 import AccountPanel from './account-panel';
+import ApplicationsPanel from './applications-panel';
+import type { ApplicationDetails } from '../lib/applications';
 import type { Snapshot } from '../lib/workspace';
 
 const initial: CoachInput = { mode: 'draft', company: '', position: '', question: '', limit: 700, experience: '', job: '', draft: '', documents: [], previous: '', followup: '', consent: true };
@@ -25,6 +27,8 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [fileBusy, setFileBusy] = useState(false);
   const [accountBusy, setAccountBusy] = useState(false);
+  const [applicationBusy, setApplicationBusy] = useState(false);
+  const [userId, setUserId] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [followup, setFollowup] = useState('');
@@ -140,6 +144,14 @@ export default function Home() {
     clear(); setForm({ ...value.form, consent: true }); setResult(value.result); setResultContext(value.resultContext); setFollowup(value.followup); setStep(value.step); setNotice('');
   }
 
+  function chooseApplication(value: ApplicationDetails) {
+    if ((form.company || result || form.documents.some(doc => doc.role === 'job' || doc.role === 'company')) && !window.confirm('지원 정보와 현재 결과를 선택한 회사의 정보로 바꿀까요? 이전 공고·기업 자료 파일은 작업실에서 제외합니다. 이력서와 API 키는 유지됩니다. 저장하지 않은 답변은 먼저 내려받아 주세요.')) return;
+    setForm(current => ({ ...current, company: value.company, position: value.position, job: value.job, question: value.question, draft: value.answer, documents: current.documents.filter(doc => doc.role !== 'job' && doc.role !== 'company'), previous: '', followup: '' }));
+    setResult(null); setFollowup(''); setError(''); setStep(hasExperience ? 1 : 0);
+    setNotice('지원 정보를 작업실로 가져왔어요. 경험 자료와 문항을 확인해주세요.');
+    document.getElementById('writing-desk')?.scrollIntoView({ behavior: 'smooth' });
+  }
+
   async function copy() {
     try { await navigator.clipboard.writeText(result?.body || result?.diagnosis || ''); setNotice('클립보드에 복사했어요.'); }
     catch { setError('복사 권한을 확인하거나 본문을 직접 선택해 복사해주세요.'); }
@@ -149,7 +161,7 @@ export default function Home() {
     <a className="skip-link" href="#workspace">본문으로 건너뛰기</a>
     <header className="site-header wrap">
       <a className="brand" href="#top" aria-label="커리어노트 처음으로"><span className="brand-mark" aria-hidden="true"><i/><i/><i/><b/></span>career note<span className="brand-period">.</span></a>
-      <nav aria-label="주 메뉴"><a href="#workspace">작업실</a><a href="#guide" onClick={() => { if (guide.current) guide.current.open = true; }}>시작 가이드 <ArrowUpRight size={14}/></a></nav>
+      <nav aria-label="주 메뉴"><a href="#applications">지원 관리</a><a href="#writing-desk">작업실</a><a href="#guide" onClick={() => { if (guide.current) guide.current.open = true; }}>가이드 <ArrowUpRight size={14}/></a></nav>
       <span className="header-note">나의 경험, 다음 기회.</span>
     </header>
 
@@ -166,8 +178,9 @@ export default function Home() {
       <section className="workspace-band" id="workspace">
         <div className="wrap">
           <div className="section-top"><div><p className="eyebrow">YOUR WORKSPACE</p><h2>나의 작업실</h2></div><span className="version">COACHING SKILL <b>v{SKILL_VERSION}</b></span></div>
-          <AccountPanel snapshot={snapshot} restore={restore} clear={clear} busy={loading || fileBusy} onBusy={setAccountBusy}/>
-          <div className="desk" inert={accountBusy} aria-busy={accountBusy}>
+          <AccountPanel snapshot={snapshot} restore={restore} clear={clear} busy={loading || fileBusy || applicationBusy} onBusy={setAccountBusy} onUser={setUserId}/>
+          <ApplicationsPanel key={userId || 'guest'} userId={userId} apiKey={apiKey} busy={loading || fileBusy || accountBusy} onBusy={setApplicationBusy} onChoose={chooseApplication} currentAnswer={{ company: resultContext.company, position: resultContext.position, body: result?.body || '' }}/>
+          <div id="writing-desk" className="desk" inert={accountBusy || applicationBusy} aria-busy={accountBusy || applicationBusy}>
             <aside className="desk-sidebar">
               <p className="small-title">오늘 필요한 도움</p>
               <div className="mode-list" role="group" aria-label="코칭 목적">
@@ -202,7 +215,7 @@ export default function Home() {
                     <div className="field-grid"><label className="field" htmlFor="company"><span>지원 회사 <b>*</b></span><input id="company" maxLength={120} value={form.company} onChange={e => update('company', e.target.value)} placeholder="회사 이름" required/></label><label className="field" htmlFor="position"><span>지원 직무 <b>*</b></span><input id="position" maxLength={120} value={form.position} onChange={e => update('position', e.target.value)} placeholder="지원하는 직무" required/></label></div>
                     <label className="field" htmlFor="question"><span>{form.mode === 'interview' ? '준비할 면접 질문' : '자기소개서 문항'} <b>*</b></span><textarea id="question" maxLength={5000} rows={3} value={form.question} onChange={e => update('question', e.target.value)} placeholder="공고에 적힌 문항을 그대로 붙여넣어 주세요." required/></label>
                     <div className="limit-row"><label htmlFor="limit">최대 글자 수</label><input id="limit" type="number" min={100} max={5000} step={50} value={form.limit} onChange={e => update('limit', Number(e.target.value))}/><span>자 · 공백과 줄바꿈 포함</span></div>
-                    <label className="field" htmlFor="job"><span>채용 공고 <small>공고 파일이 있다면 선택</small></span><textarea id="job" maxLength={16000} rows={4} value={form.job} onChange={e => update('job', e.target.value)} placeholder="담당 업무, 필수·우대 조건을 붙여넣어 주세요. 링크만으로는 공고를 읽을 수 없어요."/></label>
+                    <label className="field" htmlFor="job"><span>채용 공고 <small>공고 파일이 있다면 선택</small></span><textarea id="job" maxLength={16000} rows={4} value={form.job} onChange={e => update('job', e.target.value)} placeholder="담당 업무, 필수·우대 조건을 붙여넣어 주세요. 위 지원 관리에서 링크로 정보를 채울 수도 있어요."/></label>
                     {(form.mode === 'revise' || form.mode === 'feedback') && <label className="field" htmlFor="draft"><span>작성한 원문 <b>*</b></span><textarea id="draft" maxLength={16000} rows={8} value={form.draft} onChange={e => update('draft', e.target.value)} placeholder="검토할 자소서 원문을 붙여넣어 주세요." required/></label>}
                     <label className="consent"><input type="checkbox" checked={consent} onChange={e => setConsent(e.target.checked)}/><span>입력 자료와 키가 이 사이트 서버를 거쳐 Google Gemini로 전달되는 데 동의해요. API 키는 저장하지 않으며, Google 정책과 본인 계정의 API 요금·한도가 적용돼요. <a href="https://ai.google.dev/gemini-api/terms" target="_blank" rel="noreferrer">Google 이용약관 <ArrowUpRight size={12}/></a></span></label>
                     <div className="form-footer"><button type="button" className="quiet" onClick={() => go(0)}><ArrowLeft size={15}/> 자료 준비</button><button type="button" className="button primary" onClick={() => void generate()}>{form.mode === 'feedback' ? '피드백 받기' : '답변 만들기'} <ArrowUpRight size={17}/></button></div>

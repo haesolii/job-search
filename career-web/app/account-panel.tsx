@@ -4,8 +4,8 @@ import { useEffect, useRef, useState } from 'react';
 import { snapshotSchema, type Snapshot } from '../lib/workspace';
 
 type User = { id: string; email?: string };
-export default function AccountPanel({ snapshot, restore, clear, busy, onBusy }: {
-  snapshot: () => Snapshot; restore: (value: Snapshot) => void; clear: () => void; busy: boolean; onBusy: (value: boolean) => void;
+export default function AccountPanel({ snapshot, restore, clear, busy, onBusy, onUser }: {
+  snapshot: () => Snapshot; restore: (value: Snapshot) => void; clear: () => void; busy: boolean; onBusy: (value: boolean) => void; onUser: (id: string | null) => void;
 }) {
   const [user, setUser] = useState<User | null>(null);
   const [configured, setConfigured] = useState(false);
@@ -16,6 +16,7 @@ export default function AccountPanel({ snapshot, restore, clear, busy, onBusy }:
   const identity = useRef<string | null | undefined>(undefined);
   const inFlight = useRef(false);
   const clearRef = useRef(clear); clearRef.current = clear;
+  const onUserRef = useRef(onUser); onUserRef.current = onUser;
   const busyRef = useRef(busy); busyRef.current = busy;
   const refreshRef = useRef<() => Promise<void>>(async () => {});
   useEffect(() => { if (!busy) void refreshRef.current(); }, [busy]);
@@ -36,7 +37,7 @@ export default function AccountPanel({ snapshot, restore, clear, busy, onBusy }:
         } else if (identity.current === undefined) {
           setMessage(new URLSearchParams(location.search).get('account') === 'error' ? '로그인하지 못했어요. 다시 시도해주세요.' : next ? '저장본을 불러오거나 새 작업을 시작하세요.' : '로그인하면 이력서와 작업 결과를 다음에도 사용할 수 있어요.');
         }
-        identity.current = next; setUser(data.user); setConfigured(data.configured);
+        identity.current = next; setUser(data.user); onUserRef.current(next); setConfigured(data.configured);
       } catch { if (active) { setFailed(true); setMessage('로그인 상태를 확인하지 못했어요. 새로고침 후 다시 시도해주세요.'); } }
       finally { if (active) { inFlight.current = false; setPending(false); } }
     }
@@ -61,11 +62,11 @@ export default function AccountPanel({ snapshot, restore, clear, busy, onBusy }:
       });
       const data = await response.json();
       if (!response.ok) {
-        if (response.status === 401 || data.accountChanged) { clearRef.current(); setUser(null); identity.current = null; setRevision(null); }
+        if (response.status === 401 || data.accountChanged) { clearRef.current(); setUser(null); onUserRef.current(null); identity.current = null; setRevision(null); }
         throw new Error(data.error || '요청을 처리하지 못했어요.');
       }
       if (kind === 'login') { location.assign(data.url); return; }
-      if (kind === 'logout') { clearRef.current(); setUser(null); identity.current = null; setRevision(null); setMessage('로그아웃했어요. 저장본은 계정에 보관됩니다.'); }
+      if (kind === 'logout') { clearRef.current(); setUser(null); onUserRef.current(null); identity.current = null; setRevision(null); setMessage('로그아웃했어요. 저장본은 계정에 보관됩니다.'); }
       if (kind === 'save') { setRevision(data.revision); setMessage('현재 자료와 결과를 계정에 저장했어요. 이후 변경은 다시 저장해주세요.'); }
       if (kind === 'delete') { setRevision(null); setMessage('서버의 저장본을 삭제했어요. 화면의 입력은 그대로예요.'); }
       if (kind === 'load') {
